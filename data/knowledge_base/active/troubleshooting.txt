@@ -1,0 +1,15 @@
+Document: Product Troubleshooting Guide
+Version: 1.0
+Product: Electronics
+Region: India
+Effective Date: 2026-01-01
+Expiry Date: 2027-01-01
+Access Level: Public
+
+If a device does not turn on, verify that the device is connected to a suitable power source.
+
+For connectivity problems, restart the device and check the network connection.
+
+If the problem continues after basic troubleshooting, collect the product model and error message before escalating.
+
+Customers should not be asked to perform unsafe hardware modifications.

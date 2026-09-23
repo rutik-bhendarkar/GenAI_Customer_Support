@@ -1,0 +1,17 @@
+Document: Refund Policy
+Version: 1.0
+Product: All Products
+Region: India
+Effective Date: 2026-01-01
+Expiry Date: 2027-01-01
+Access Level: Public
+
+Customers can request a refund within 7 days of receiving an eligible product.
+
+Refund requests must include the order ID and the reason for the refund.
+
+Refund eligibility depends on product condition and the applicable return policy.
+
+Refund processing begins after the returned product is received and inspected.
+
+Updated: Refund policy clarification for customer support.

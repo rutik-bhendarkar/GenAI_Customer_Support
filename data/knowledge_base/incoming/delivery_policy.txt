@@ -1,0 +1,15 @@
+Document: Delivery Policy
+Version: 1.0
+Product: All Products
+Region: India
+Effective Date: 2026-01-01
+Expiry Date: 2027-01-01
+Access Level: Public
+
+Standard delivery normally takes 3 to 7 business days.
+
+Customers can track eligible orders using their order ID.
+
+If an order is delayed beyond the expected delivery period, the customer may contact support.
+
+Delivery estimates may vary depending on location, product availability, weekends and holidays.

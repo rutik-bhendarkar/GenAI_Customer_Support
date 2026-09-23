@@ -1,0 +1,9 @@
+Document: Refund Policy
+Version: 99.0
+Product: All Products
+Region: India
+Effective Date: 2027-06-01
+Expiry Date: 2028-06-01
+Access Level: PUBLIC
+
+Customers can request a refund within 99 days.

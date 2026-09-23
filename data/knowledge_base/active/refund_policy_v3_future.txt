@@ -1,0 +1,11 @@
+Document: Refund Policy
+Version: 3.0
+Product: All Products
+Region: India
+Effective Date: 2027-01-01
+Expiry Date: 2028-01-01
+Access Level: PUBLIC
+
+Customers can request a refund within 15 days of receiving an eligible product.
+
+Refund requests must include the order ID and the reason for the refund.

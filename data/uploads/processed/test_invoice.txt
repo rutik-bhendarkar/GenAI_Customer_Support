@@ -1,0 +1,9 @@
+INVOICE
+
+Order ID: ORD12345
+Product: Samsung Galaxy Phone
+Order Date: 2026-09-20
+Amount: ₹29,999
+Error Code: ERR-500
+
+Customer reports that the product is not working.

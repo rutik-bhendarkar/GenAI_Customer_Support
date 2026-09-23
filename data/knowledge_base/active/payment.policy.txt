@@ -1,0 +1,15 @@
+Document: Payment Policy
+Version: 1.0
+Product: All Products
+Region: India
+Effective Date: 2026-01-01
+Expiry Date: 2027-01-01
+Access Level: Public
+
+Customers should verify payment details before completing a transaction.
+
+If a customer is charged twice for the same order, the transaction should be reviewed by the payment support team.
+
+Unauthorized or suspicious transactions should be escalated to the security team.
+
+Customers should never share passwords, OTPs or complete payment card details with support agents.

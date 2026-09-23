@@ -1,0 +1,32 @@
+# Environment and secrets
+.env
+.env.*
+
+# Virtual environments
+.venv/
+venv/
+GenAI_Customer_Support/.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Pytest
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+GenAI_Customer_Support/
+
+# Runtime uploads
+data/uploads/incoming/
+data/uploads/processed/
+data/uploads/rejected/

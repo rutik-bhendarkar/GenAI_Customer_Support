@@ -1,0 +1,11 @@
+Document: Restricted Support Policy
+Version: 1.0
+Product: All Products
+Region: India
+Effective Date: 2026-01-01
+Expiry Date: 2027-01-01
+Access Level: ADMIN
+
+Internal administrative information is available only to authorized administrators.
+
+Customers and standard support agents must not access this information.
