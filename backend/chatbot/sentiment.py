@@ -1,47 +1,18 @@
-from transformers import pipeline
-
-
-# ============================================================
-# SENTIMENT MODEL
-# ============================================================
-
-# Load the model only when it is actually needed.
-# This prevents the Transformer model from loading during
-# application startup.
-sentiment_pipeline = None
-
-
-def get_sentiment_pipeline():
-    global sentiment_pipeline
-
-    if sentiment_pipeline is None:
-        sentiment_pipeline = pipeline(
-            "sentiment-analysis",
-            model="distilbert-base-uncased-finetuned-sst-2-english",
-            device=-1  # CPU only - no CUDA/GPU
-        )
-
-    return sentiment_pipeline
-
-
-# ============================================================
-# SENTIMENT ANALYSIS
-# ============================================================
+# backend/chatbot/sentiment.py
 
 def analyze_sentiment(message: str):
+    """
+    Lightweight sentiment analysis for deployment.
+
+    This version does not load Hugging Face Transformers/PyTorch,
+    which keeps memory usage low on Render's 512 MB instance.
+    """
 
     text = message.lower().strip()
 
-    # Run Transformer model only when needed
-    result = get_sentiment_pipeline()(message)[0]
-
-    model_sentiment = result["label"]
-    confidence = round(float(result["score"]), 4)
-
-    # ========================================================
+    # -----------------------------
     # HIGH-RISK PATTERNS
-    # ========================================================
-
+    # -----------------------------
     high_risk_words = [
         "hacked",
         "hack",
@@ -56,10 +27,9 @@ def analyze_sentiment(message: str):
         "legal threat"
     ]
 
-    # ========================================================
+    # -----------------------------
     # URGENT PATTERNS
-    # ========================================================
-
+    # -----------------------------
     urgent_words = [
         "urgent",
         "urgently",
@@ -70,10 +40,9 @@ def analyze_sentiment(message: str):
         "help now"
     ]
 
-    # ========================================================
+    # -----------------------------
     # FRUSTRATION PATTERNS
-    # ========================================================
-
+    # -----------------------------
     frustrated_words = [
         "frustrated",
         "extremely frustrating",
@@ -89,10 +58,9 @@ def analyze_sentiment(message: str):
         "ridiculous"
     ]
 
-    # ========================================================
+    # -----------------------------
     # SARCASM PATTERNS
-    # ========================================================
-
+    # -----------------------------
     sarcastic_patterns = [
         "great, another",
         "great another",
@@ -106,10 +74,9 @@ def analyze_sentiment(message: str):
         "love being"
     ]
 
-    # ========================================================
+    # -----------------------------
     # POSITIVE PATTERNS
-    # ========================================================
-
+    # -----------------------------
     positive_phrases = [
         "thank you",
         "thanks",
@@ -127,10 +94,9 @@ def analyze_sentiment(message: str):
         "everything works"
     ]
 
-    # ========================================================
+    # -----------------------------
     # NEGATIVE PATTERNS
-    # ========================================================
-
+    # -----------------------------
     negative_words = [
         "not working",
         "not received",
@@ -151,10 +117,9 @@ def analyze_sentiment(message: str):
         "unauthorized"
     ]
 
-    # ========================================================
+    # -----------------------------
     # NEUTRAL PATTERNS
-    # ========================================================
-
+    # -----------------------------
     neutral_phrases = [
         "i want to know",
         "i would like to know",
@@ -173,126 +138,88 @@ def analyze_sentiment(message: str):
         "what are the details"
     ]
 
-    # ========================================================
-    # PATTERN DETECTION
-    # ========================================================
-
-    neutral = any(
-        phrase in text
-        for phrase in neutral_phrases
-    )
-
+    # -----------------------------
+    # DETECTION
+    # -----------------------------
     high_risk = any(
-        phrase in text
-        for phrase in high_risk_words
+        phrase in text for phrase in high_risk_words
     )
 
     sarcastic = any(
-        phrase in text
-        for phrase in sarcastic_patterns
+        phrase in text for phrase in sarcastic_patterns
     )
 
     frustrated = any(
-        phrase in text
-        for phrase in frustrated_words
+        phrase in text for phrase in frustrated_words
     )
 
     urgent = any(
-        phrase in text
-        for phrase in urgent_words
+        phrase in text for phrase in urgent_words
     )
 
     positive = any(
-        phrase in text
-        for phrase in positive_phrases
+        phrase in text for phrase in positive_phrases
     )
 
     negative = any(
-        phrase in text
-        for phrase in negative_words
+        phrase in text for phrase in negative_words
     )
 
-    # ========================================================
+    neutral = any(
+        phrase in text for phrase in neutral_phrases
+    )
+
+    # -----------------------------
     # SENTIMENT DECISION
-    # ========================================================
+    # -----------------------------
 
-    # 1. High-risk always has highest priority
+    # 1. High-risk
     if high_risk:
-
         sentiment = "NEGATIVE"
         category = "Negative"
-
-        confidence = max(
-            confidence,
-            0.90
-        )
+        confidence = 0.95
 
     # 2. Sarcasm
     elif sarcastic:
-
         sentiment = "NEGATIVE"
         category = "Sarcastic"
-
-        confidence = max(
-            confidence,
-            0.85
-        )
+        confidence = 0.90
 
     # 3. Frustration
     elif frustrated:
-
         sentiment = "NEGATIVE"
         category = "Frustrated"
+        confidence = 0.90
 
     # 4. Urgent
     elif urgent:
-
         sentiment = "NEGATIVE"
         category = "Urgent"
-
-        confidence = max(
-            confidence,
-            0.90
-        )
+        confidence = 0.90
 
     # 5. Explicit positive
     elif positive:
-
         sentiment = "POSITIVE"
         category = "Positive"
+        confidence = 0.90
 
     # 6. Explicit negative
     elif negative:
-
         sentiment = "NEGATIVE"
         category = "Negative"
+        confidence = 0.85
 
     # 7. Explicit neutral
     elif neutral:
-
         sentiment = "NEUTRAL"
         category = "Neutral"
+        confidence = 0.85
 
-    # 8. Transformer model result
-    elif model_sentiment == "POSITIVE":
-
-        sentiment = "POSITIVE"
-        category = "Positive"
-
-    elif model_sentiment == "NEGATIVE":
-
-        sentiment = "NEGATIVE"
-        category = "Negative"
-
-    # 9. Fallback
+    # 8. Default
     else:
-
         sentiment = "NEUTRAL"
         category = "Neutral"
-
-    # ========================================================
-    # RETURN RESULT
-    # ========================================================
+        confidence = 0.60
 
     return {
         "sentiment": sentiment,
