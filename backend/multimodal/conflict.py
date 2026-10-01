@@ -106,6 +106,10 @@ def compare_order_ids(message, extracted_order_ids):
         return {
             "status": "NO_COMPARISON",
             "conflict": False,
+            "message_order_ids":
+                message_ids,
+            "file_order_ids":
+                file_ids,
             "message": (
                 "No matching order ID information "
                 "was available for comparison."

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>GenAI Customer Support</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <div class="app">
+
+        <!-- HEADER -->
+        <header class="header">
+            <div>
+                <h1>GenAI Customer Support</h1>
+                <p>AI-powered customer support assistant</p>
+            </div>
+
+            <div class="status">
+                <span class="status-dot"></span>
+                Backend Online
+            </div>
+        </header>
+
+
+        <!-- MAIN -->
+        <main class="main-container">
+
+            <!-- CHAT SECTION -->
+            <section class="chat-section">
+    <div class="section-header">
+        <h2>Customer Support Chat</h2>
+        <p>Ask your question or describe your issue.</p>
+    </div>
+
+    <div id="chatBox" class="chat-box">
+        <div class="message assistant">
+            <span class="message-label">AI Assistant</span>
+            <div class="message-bubble">
+                Hello! 👋 How can I help you today?
+            </div>
+        </div>
+    </div>
+
+    <div class="chat-input-area">
+        <input
+            type="text"
+            id="messageInput"
+            placeholder="Type your message..."
+            autocomplete="off"
+        />
+
+        <button id="sendButton" type="button">
+            Send
+        </button>
+    </div>
+</section>
+
+
+            <!-- FILE UPLOAD -->
+            <section class="upload-section">
+
+                <div class="section-header">
+                    <h2>Upload Evidence</h2>
+
+                    <p>
+                        Upload an invoice, screenshot, order image
+                        or PDF.
+                    </p>
+                </div>
+
+
+                <div class="upload-box">
+
+                    <input
+                        type="file"
+                        id="fileInput"
+                        accept=".pdf,.png,.jpg,.jpeg"
+                    >
+
+                    <textarea
+                        id="customerMessage"
+                        placeholder="Explain the problem with this file..."
+                        rows="3"
+                    ></textarea>
+
+                    <button id="uploadButton">
+                        Upload & Process
+                    </button>
+
+                </div>
+
+            </section>
+
+
+            <!-- RESULT -->
+            <section class="result-section">
+
+                <div class="section-header">
+                    <h2>AI Analysis</h2>
+                    <p>Information returned by the support system.</p>
+                </div>
+
+
+                <div id="resultPanel" class="result-panel">
+
+                    <p class="empty-result">
+                        Results will appear here.
+                    </p>
+
+                </div>
+
+            </section>
+
+        </main>
+
+    </div>
+
+
+    <script src="script.js"></script>
+
+</body>
+</html>

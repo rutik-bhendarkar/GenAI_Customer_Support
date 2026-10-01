@@ -42,61 +42,121 @@ AGENTS = [
 
 
 # ==========================================
+# SUPPORT KEYWORDS
+# ==========================================
+#
+# Keywords are grouped per support category and are checked from
+# the most specific category to the least specific one.
+#
+# IMPORTANT (routing regression):
+# A bare "order" is deliberately NOT part of DELIVERY_KEYWORDS.
+# Almost every support message mentions an order, so matching it
+# first used to send product issues
+# ("The product from order ORD10004 is not working and shows
+# error code ERR-500.") and payment issues
+# ("I was charged twice for order ORD10003") to the delivery
+# queue. "order" is only used as a last-resort fallback at the
+# end of determine_required_skill(), so a generic order question
+# still reaches the delivery/order team.
+
+DELIVERY_KEYWORDS = [
+    "delivery",
+    "deliver",
+    "arrive",
+    "shipping",
+    "shipped",
+    "shipment",
+    "tracking",
+    "dispatch",
+    "courier",
+    "parcel",
+    "package",
+    "transit",
+    "delay",
+    "not received",
+    "not receive",
+    "where is my order",
+    "where is my parcel"
+]
+
+PAYMENT_KEYWORDS = [
+    "payment",
+    "paid",
+    "charged",
+    "charge",
+    "refund",
+    "transaction",
+    "billing",
+    "billed",
+    "invoice"
+]
+
+ACCOUNT_KEYWORDS = [
+    "hacked",
+    "hack",
+    "account",
+    "password",
+    "login",
+    "log in",
+    "sign in",
+    "security",
+    "unauthorized",
+    "locked"
+]
+
+TECHNICAL_KEYWORDS = [
+    "technical",
+    "broken",
+    "not working",
+    "not functioning",
+    "does not work",
+    "doesn't work",
+    "stopped working",
+    "defective",
+    "damaged",
+    "faulty",
+    "malfunction",
+    "error",
+    "err-",
+    "crash",
+    "product"
+]
+
+
+# ==========================================
 # DETERMINE REQUIRED SKILL
 # ==========================================
 
 def determine_required_skill(issue: str) -> str:
+    """
+    Determine which support skill a ticket requires.
 
-    issue = issue.lower()
+    Categories are evaluated from the most specific one to the
+    least specific one so that a real product, payment or account
+    problem is never masked by the word "order" that appears in
+    almost every customer message.
+    """
 
-    if any(
-        word in issue
-        for word in [
-            "delivery",
-            "delivered",
-            "arrived",
-            "order",
-            "shipping",
-            "shipment",
-            "tracking"
-        ]
+    text = (issue or "").lower()
+
+    for skill, keywords in (
+        ("delivery", DELIVERY_KEYWORDS),
+        ("payment", PAYMENT_KEYWORDS),
+        ("account", ACCOUNT_KEYWORDS),
+        ("technical", TECHNICAL_KEYWORDS)
     ):
+
+        if any(keyword in text for keyword in keywords):
+
+            return skill
+
+    # Last resort: a generic order question (for example
+    # "What is my order status?") still belongs to the
+    # delivery/order team.
+
+    if "order" in text:
+
         return "delivery"
-
-    if any(
-        word in issue
-        for word in [
-            "payment",
-            "charged",
-            "refund",
-            "transaction"
-        ]
-    ):
-        return "payment"
-
-    if any(
-        word in issue
-        for word in [
-            "hacked",
-            "account",
-            "password",
-            "login",
-            "security",
-            "unauthorized"
-        ]
-    ):
-        return "account"
-
-    if any(
-        word in issue
-        for word in [
-            "technical",
-            "broken",
-            "not working",
-            "defective"
-        ]
-    ):
-        return "technical"
 
     return "general"
 

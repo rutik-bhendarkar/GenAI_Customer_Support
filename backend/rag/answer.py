@@ -1,13 +1,45 @@
 from datetime import date
+import logging
 
 from backend.rag.retriever import (
-    load_documents,
+    load_trusted_documents,
     remove_duplicate_documents,
     filter_active_documents,
     get_documents_for_date,
     filter_documents_by_access,
-    search_documents
+    search_documents,
+    METADATA_FIELDS,
+    MINIMUM_RELEVANCE_SCORE
 )
+
+
+logger = logging.getLogger(
+    "genai_customer_support.rag"
+)
+
+
+SAFE_FALLBACK_ANSWER = (
+    "I could not find enough reliable "
+    "information in the knowledge base "
+    "to answer this question."
+)
+
+
+def build_fallback_answer():
+    """
+    Safe customer-facing response used whenever no trusted
+    knowledge-base content can answer the question.
+    """
+
+    return {
+        "answer": SAFE_FALLBACK_ANSWER,
+        "sources": [],
+        "rag_used": False,
+        "retrieval_score": 0.0,
+        "chunks_retrieved": 0
+    }
+
+
 def contains_prompt_injection(text):
     """
     Detect common prompt-injection instructions
@@ -46,11 +78,27 @@ def generate_grounded_answer(
     requested_date=None
 ):
     """
-    Generate an answer using only applicable
-    and authorized knowledge-base documents.
+    Generate an answer using only applicable, authorized and
+    security-validated knowledge-base documents.
     """
 
-    documents = load_documents()
+    logger.info(
+        "RAG customer query: %r | user_role=%s | requested_date=%s",
+        query,
+        user_role,
+        requested_date or "today"
+    )
+
+    # --------------------------------------------------------
+    # TRUSTED DOCUMENTS ONLY
+    # --------------------------------------------------------
+    #
+    # load_trusted_documents() applies the existing
+    # knowledge-base security validation, so quarantined
+    # documents (malicious_test.txt) and documents rejected by
+    # prompt-injection validation can never be retrieved.
+
+    documents = load_trusted_documents()
 
     # Remove duplicate policies
     documents = remove_duplicate_documents(
@@ -92,14 +140,12 @@ def generate_grounded_answer(
 
     if not authorized_documents:
 
-        return {
-            "answer": (
-                "I could not find an authorized "
-                "knowledge-base document that can "
-                "answer this question."
-            ),
-            "sources": []
-        }
+        logger.info(
+            "RAG no authorized knowledge-base document for role %s",
+            user_role
+        )
+
+        return build_fallback_answer()
 
     # --------------------------------------------------------
     # SEARCH
@@ -109,9 +155,10 @@ def generate_grounded_answer(
         query
     )
 
-    # Only keep documents that are both:
-    # 1. applicable by date
-    # 2. authorized for the user
+    # Only keep documents that are all of:
+    # 1. trusted (passed knowledge-base security validation)
+    # 2. applicable by date
+    # 3. authorized for the user
 
     allowed_filenames = {
         document["filename"]
@@ -124,62 +171,85 @@ def generate_grounded_answer(
         if result["filename"] in allowed_filenames
     ]
 
+    logger.info(
+        "RAG retrieval scores: %s",
+        [
+            (result["filename"], result["score"])
+            for result in filtered_results
+        ]
+    )
+
     # --------------------------------------------------------
     # INSUFFICIENT EVIDENCE
     # --------------------------------------------------------
 
     if not filtered_results:
 
-        return {
-            "answer": (
-                "I could not find enough reliable "
-                "information in the knowledge base "
-                "to answer this question."
-            ),
-            "sources": []
-        }
+        logger.info(
+            "RAG no trusted document matched the query"
+        )
+
+        return build_fallback_answer()
 
     # Require reasonable relevance
     relevant_results = [
         result
         for result in filtered_results
-        if result["score"] >= 0.20
+        if result["score"] >= MINIMUM_RELEVANCE_SCORE
     ]
 
     if not relevant_results:
 
-        return {
-            "answer": (
-                "I could not find enough reliable "
-                "information in the knowledge base "
-                "to answer this question."
-            ),
-            "sources": []
-        }
+        logger.info(
+            "RAG no document reached the relevance "
+            "threshold of %.2f",
+            MINIMUM_RELEVANCE_SCORE
+        )
+
+        return build_fallback_answer()
+
+    # --------------------------------------------------------
+    # PROMPT INJECTION PROTECTION (SECOND LAYER)
+    # --------------------------------------------------------
+    #
+    # Untrusted documents are already filtered out during
+    # retrieval. This check keeps the protection in place even
+    # if a document were to be activated incorrectly.
+
+    safe_results = []
+
+    for result in relevant_results:
+
+        if contains_prompt_injection(result["content"]):
+
+            logger.warning(
+                "RAG discarded unsafe knowledge-base document: %s",
+                result["filename"]
+            )
+
+            continue
+
+        safe_results.append(
+            result
+        )
+
+    if not safe_results:
+
+        logger.warning(
+            "RAG every relevant document failed the "
+            "prompt-injection check"
+        )
+
+        return build_fallback_answer()
 
     # --------------------------------------------------------
     # BEST EVIDENCE
     # --------------------------------------------------------
 
-    best_result = relevant_results[0]
+    best_result = safe_results[0]
 
     content = best_result["content"]
     metadata = best_result["metadata"]
-
-# --------------------------------------------------------
-# PROMPT INJECTION PROTECTION
-# --------------------------------------------------------
-
-    if contains_prompt_injection(content):
-
-        return {
-            "answer": (
-                "The retrieved knowledge-base document "
-                "contains unsafe or suspicious instructions. "
-                "I cannot use that document to answer this question."
-            ),
-            "sources": []
-        }
 
     # --------------------------------------------------------
     # REMOVE METADATA FROM ANSWER
@@ -188,16 +258,6 @@ def generate_grounded_answer(
     content_lines = content.splitlines()
 
     answer_lines = []
-
-    metadata_fields = {
-        "Document",
-        "Version",
-        "Product",
-        "Region",
-        "Effective Date",
-        "Expiry Date",
-        "Access Level"
-    }
 
     for line in content_lines:
 
@@ -208,7 +268,7 @@ def generate_grounded_answer(
                 1
             )[0].strip()
 
-            if field in metadata_fields:
+            if field in METADATA_FIELDS:
                 continue
 
         if line.strip():
@@ -253,9 +313,45 @@ def generate_grounded_answer(
         )
     }
 
+    # --------------------------------------------------------
+    # RETRIEVED CHUNKS
+    # --------------------------------------------------------
+
+    retrieved_chunks = best_result.get(
+        "chunks",
+        []
+    )
+
+    # --------------------------------------------------------
+    # DEVELOPMENT LOGGING
+    #
+    # Retrieval diagnostics stay in the backend log and are
+    # never returned to the customer.
+    # --------------------------------------------------------
+
+    logger.info(
+        "RAG retrieved chunks: %d | best chunk score=%s | "
+        "matched terms=%s",
+        len(retrieved_chunks),
+        (
+            retrieved_chunks[0]["score"]
+            if retrieved_chunks
+            else 0.0
+        ),
+        best_result.get("matched_terms", [])
+    )
+
+    logger.info(
+        "RAG final sources: %s | rag_used=True",
+        [source["filename"]]
+    )
+
     return {
         "answer": answer,
-        "sources": [source]
+        "sources": [source],
+        "rag_used": True,
+        "retrieval_score": best_result["score"],
+        "chunks_retrieved": len(retrieved_chunks)
     }
 
 

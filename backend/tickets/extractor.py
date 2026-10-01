@@ -38,16 +38,16 @@ def extract_ticket_information(message: str):
     # from being treated as order IDs.
 
     order_match = re.search(
-        r"\b(?:ORDER|ORD)[- ]?(\d{3,})\b",
+        r"\b(?:ORDER|ORD)[-_ ]?([A-Za-z]?\d{3,})\b",
         text,
         re.IGNORECASE
     )
 
     if order_match:
 
-        digits = order_match.group(1)
+        identifier = order_match.group(1)
 
-        order_id = f"ORD{digits}"
+        order_id = f"ORD{identifier}"
 
     # ========================================================
     # 2. EXTRACT CUSTOMER NAME

@@ -1,4 +1,5 @@
 from pathlib import Path
+import logging
 
 from backend.multimodal.file_handler import (
     create_upload_directories,
@@ -15,13 +16,73 @@ from backend.multimodal.ocr import (
     extract_dates,
     extract_amounts,
     extract_product_names,
-    extract_error_codes
+    extract_error_codes,
+    get_ocr_engine_diagnostics
 )
 from backend.multimodal.retention import cleanup_uploads
 from backend.multimodal.validator import (
     validate_file,
     validate_content
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+# Image extensions that rely on the OCR engine.
+IMAGE_EXTENSIONS = {
+    ".png",
+    ".jpg",
+    ".jpeg"
+}
+
+
+# ============================================================
+# REJECTED FILE HANDLING
+# ============================================================
+
+def reject_file(file_path):
+    """
+    Move a file to the rejected directory.
+
+    Returns the new path, or None when the file is missing
+    or the move itself fails. A failing move must never
+    replace the real processing error.
+    """
+
+    if not file_path.exists():
+
+        return None
+
+    try:
+
+        return move_to_rejected(
+            file_path
+        )
+
+    except Exception as error:
+
+        logger.error(
+            "Failed to move %s to the rejected directory: %s",
+            file_path.name,
+            error
+        )
+
+        return None
+
+
+def extraction_diagnostics(file_path):
+    """
+    Return extra diagnostics for text-extraction failures.
+
+    OCR engine details are only relevant for image files.
+    """
+
+    if file_path.suffix.lower() not in IMAGE_EXTENSIONS:
+
+        return None
+
+    return get_ocr_engine_diagnostics()
 
 
 # ============================================================
@@ -54,13 +115,9 @@ def process_file(file_path,customer_message=None):
 
     if not file_validation["valid"]:
 
-        rejected_path = None
-
-        if file_path.exists():
-
-            rejected_path = move_to_rejected(
-                file_path
-            )
+        rejected_path = reject_file(
+            file_path
+        )
 
         return {
             "success": False,
@@ -88,7 +145,20 @@ def process_file(file_path,customer_message=None):
 
     except Exception as error:
 
-        rejected_path = move_to_rejected(
+        # Detailed diagnostics are logged on the backend.
+        # The API response stays short and does not expose
+        # a stack trace.
+
+        logger.error(
+            "Text extraction failed for %s (%s): %s: %s",
+            file_path.name,
+            file_path.suffix.lower() or "unknown",
+            type(error).__name__,
+            error,
+            exc_info=True
+        )
+
+        rejected_path = reject_file(
             file_path
         )
 
@@ -96,11 +166,22 @@ def process_file(file_path,customer_message=None):
             "success": False,
             "stage": "text_extraction",
             "filename": file_path.name,
+            "file_type":
+                file_path.suffix.lower(),
             "message":
                 "Text extraction failed.",
             "error": str(error),
-            "processed_file":
+            "error_type":
+                type(error).__name__,
+            "ocr_engine":
+                extraction_diagnostics(
+                    file_path
+                ),
+            "processed_file": (
                 str(rejected_path)
+                if rejected_path
+                else None
+            )
         }
 
     # --------------------------------------------------------
@@ -109,7 +190,13 @@ def process_file(file_path,customer_message=None):
 
     if not extracted_text.strip():
 
-        rejected_path = move_to_rejected(
+        logger.warning(
+            "No readable text was extracted from %s (%s).",
+            file_path.name,
+            file_path.suffix.lower() or "unknown"
+        )
+
+        rejected_path = reject_file(
             file_path
         )
 
@@ -117,10 +204,22 @@ def process_file(file_path,customer_message=None):
             "success": False,
             "stage": "text_extraction",
             "filename": file_path.name,
+            "file_type":
+                file_path.suffix.lower(),
             "message":
                 "No readable text was found in the file.",
-            "processed_file":
+            "error":
+                "The file was processed but no text could be read "
+                "from it. Please upload a clearer document or image.",
+            "ocr_engine":
+                extraction_diagnostics(
+                    file_path
+                ),
+            "processed_file": (
                 str(rejected_path)
+                if rejected_path
+                else None
+            )
         }
 
     # --------------------------------------------------------
@@ -133,7 +232,14 @@ def process_file(file_path,customer_message=None):
 
     if not content_validation["valid"]:
 
-        rejected_path = move_to_rejected(
+        logger.warning(
+            "Content security validation rejected %s. "
+            "Detected patterns: %s",
+            file_path.name,
+            content_validation["detected_patterns"]
+        )
+
+        rejected_path = reject_file(
             file_path
         )
 
@@ -148,8 +254,11 @@ def process_file(file_path,customer_message=None):
                 content_validation[
                     "detected_patterns"
                 ],
-            "processed_file":
+            "processed_file": (
                 str(rejected_path)
+                if rejected_path
+                else None
+            )
         }
 
     # --------------------------------------------------------
@@ -205,7 +314,14 @@ def process_file(file_path,customer_message=None):
 
         if comparison_result["conflict"]:
 
-            rejected_path = move_to_rejected(
+            logger.warning(
+                "Conflict detected between %s and the "
+                "customer message. Conflicts: %s",
+                file_path.name,
+                comparison_result["conflicts"]
+            )
+
+            rejected_path = reject_file(
                 file_path
             )
 
@@ -221,8 +337,11 @@ def process_file(file_path,customer_message=None):
                 ),
                 "comparison":
                     comparison_result,
-                "processed_file":
+                "processed_file": (
                     str(rejected_path)
+                    if rejected_path
+                    else None
+                )
             }
     # --------------------------------------------------------
     # STEP 5 - MOVE TO PROCESSED

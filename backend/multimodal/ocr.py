@@ -1,9 +1,153 @@
 from pathlib import Path
+import os
 import re
+import shutil
 
 import pytesseract
 from PIL import Image
 from pypdf import PdfReader
+
+
+# ============================================================
+# TESSERACT OCR ENGINE RESOLUTION
+# ============================================================
+
+# Optional environment overrides for the Tesseract executable.
+TESSERACT_ENVIRONMENT_VARIABLES = (
+    "TESSERACT_CMD",
+    "TESSERACT_PATH"
+)
+
+
+# Common Windows installation directories.
+WINDOWS_TESSERACT_LOCATIONS = (
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    r"C:\ProgramData\chocolatey\bin\tesseract.exe"
+)
+
+
+def resolve_tesseract_command():
+    """
+    Locate the Tesseract OCR executable.
+
+    Resolution order:
+
+    1. TESSERACT_CMD / TESSERACT_PATH environment variable
+    2. tesseract already available on PATH
+    3. Common Windows installation directories
+
+    Returns the resolved executable path,
+    or None when Tesseract cannot be located.
+    """
+
+    # --------------------------------------------------------
+    # 1. Environment variable override
+    # --------------------------------------------------------
+
+    for variable in TESSERACT_ENVIRONMENT_VARIABLES:
+
+        configured = os.environ.get(variable)
+
+        if configured and Path(configured).is_file():
+
+            return configured
+
+    # --------------------------------------------------------
+    # 2. Already available on PATH
+    # --------------------------------------------------------
+
+    found_on_path = shutil.which("tesseract")
+
+    if found_on_path:
+
+        return found_on_path
+
+    # --------------------------------------------------------
+    # 3. Common per-user / system install locations
+    # --------------------------------------------------------
+
+    candidates = list(
+        WINDOWS_TESSERACT_LOCATIONS
+    )
+
+    local_app_data = os.environ.get(
+        "LOCALAPPDATA"
+    )
+
+    if local_app_data:
+
+        local_app_data_path = Path(
+            local_app_data
+        )
+
+        candidates.extend([
+            str(
+                local_app_data_path
+                / "Tesseract-OCR"
+                / "tesseract.exe"
+            ),
+            str(
+                local_app_data_path
+                / "Programs"
+                / "Tesseract-OCR"
+                / "tesseract.exe"
+            )
+        ])
+
+    for candidate in candidates:
+
+        if Path(candidate).is_file():
+
+            return candidate
+
+    return None
+
+
+# Resolve once at import time so every OCR call
+# uses the same executable.
+TESSERACT_COMMAND = resolve_tesseract_command()
+
+
+if TESSERACT_COMMAND:
+
+    pytesseract.pytesseract.tesseract_cmd = (
+        TESSERACT_COMMAND
+    )
+
+
+def get_ocr_engine_diagnostics():
+    """
+    Return non-sensitive diagnostics about the OCR engine
+    used for image files.
+
+    Used for logging and for upload error responses so that
+    OCR failures can be diagnosed quickly.
+    """
+
+    diagnostics = {
+        "engine": "tesseract (pytesseract)",
+        "executable":
+            TESSERACT_COMMAND
+            or pytesseract.pytesseract.tesseract_cmd,
+        "available": False
+    }
+
+    try:
+
+        diagnostics["version"] = str(
+            pytesseract.get_tesseract_version()
+        )
+
+        diagnostics["available"] = True
+
+    except Exception as error:
+
+        diagnostics["error"] = (
+            f"{type(error).__name__}: {error}"
+        )
+
+    return diagnostics
 
 
 # ============================================================
@@ -24,7 +168,7 @@ def extract_text_from_image(file_path):
     except Exception as error:
         raise RuntimeError(
             f"Image OCR failed: {error}"
-        )
+        ) from error
 
 
 def extract_text_from_pdf(file_path):

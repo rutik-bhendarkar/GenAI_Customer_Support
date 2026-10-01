@@ -1,4 +1,5 @@
 from pathlib import Path
+import logging
 import re
 from datetime import date, datetime
 
@@ -6,10 +7,55 @@ from backend.knowledge_base.access_control import (
     check_document_access
 )
 
+# Reuse the existing knowledge-base security validation so that
+# untrusted documents (missing metadata, too short, or containing
+# prompt-injection instructions) are never retrievable.
+from backend.knowledge_base.validator import (
+    quality_check
+)
+
+
+logger = logging.getLogger(
+    "genai_customer_support.rag"
+)
+
 
 KNOWLEDGE_BASE_PATH = Path(
     "data/knowledge_base/active"
 )
+
+
+# ============================================================
+# DOCUMENT METADATA FIELDS
+# ============================================================
+
+METADATA_FIELDS = {
+    "Document",
+    "Version",
+    "Product",
+    "Region",
+    "Effective Date",
+    "Expiry Date",
+    "Access Level"
+}
+
+
+# ============================================================
+# RETRIEVAL TUNING
+# ============================================================
+
+# A trusted document must reach this relevance score before its
+# content may be used to answer a customer question.
+MINIMUM_RELEVANCE_SCORE = 0.20
+
+# How much weight question coverage carries versus matched
+# domain vocabulary strength.
+COVERAGE_WEIGHT = 0.6
+KEYWORD_WEIGHT = 0.4
+
+# Matched vocabulary is capped so a single repeated topic cannot
+# dominate the score.
+MAX_KEYWORD_WEIGHT = 4
 
 
 # ============================================================
@@ -20,13 +66,8 @@ def extract_metadata(content):
     metadata = {}
 
     field_patterns = {
-        "Document": r"^Document:\s*(.+)$",
-        "Version": r"^Version:\s*(.+)$",
-        "Product": r"^Product:\s*(.+)$",
-        "Region": r"^Region:\s*(.+)$",
-        "Effective Date": r"^Effective\s*Date:\s*(.+)$",
-        "Expiry Date": r"^Expiry\s*Date:\s*(.+)$",
-        "Access Level": r"^Access\s*Level:\s*(.+)$"
+        field: rf"^{re.escape(field)}:\s*(.+)$"
+        for field in METADATA_FIELDS
     }
 
     for field, pattern in field_patterns.items():
@@ -105,6 +146,12 @@ def is_policy_active(metadata, check_date=None):
 def load_documents():
     """
     Load all TXT documents from the active knowledge base.
+
+    Every document is evaluated with the existing knowledge-base
+    security/quality validation. Documents that fail validation
+    (missing metadata, empty/too short content, or prompt
+    injection) are marked as untrusted and are never used for
+    retrieval.
     """
 
     documents = []
@@ -126,11 +173,22 @@ def load_documents():
                 content
             )
 
+            validation = quality_check(
+                file_path
+            )
+
             documents.append(
                 {
                     "filename": file_path.name,
                     "content": content,
-                    "metadata": metadata
+                    "metadata": metadata,
+                    "trusted": bool(
+                        validation.get("passed", False)
+                    ),
+                    "validation_issues": validation.get(
+                        "issues",
+                        []
+                    )
                 }
             )
 
@@ -142,6 +200,57 @@ def load_documents():
             )
 
     return documents
+
+
+def load_trusted_documents():
+    """
+    Return only knowledge-base documents that passed the existing
+    security validation.
+
+    Quarantined documents (for example malicious_test.txt) are not
+    part of the active folder and documents rejected by
+    prompt-injection validation are excluded here.
+    """
+
+    trusted_documents = []
+
+    rejected_documents = []
+
+    for document in load_documents():
+
+        if document.get("trusted"):
+
+            trusted_documents.append(document)
+
+        else:
+
+            rejected_documents.append(
+                {
+                    "filename": document["filename"],
+                    "issues": document.get(
+                        "validation_issues",
+                        []
+                    )
+                }
+            )
+
+    if rejected_documents:
+
+        logger.warning(
+            "Knowledge-base documents excluded by security "
+            "validation: %s",
+            rejected_documents
+        )
+
+    logger.info(
+        "Trusted knowledge-base documents: %s",
+        [
+            document["filename"]
+            for document in trusted_documents
+        ]
+    )
+
+    return trusted_documents
 
 
 # ============================================================
@@ -359,6 +468,399 @@ def filter_documents_by_access(
 
     return authorized_documents
 
+# ============================================================
+# RETRIEVAL VOCABULARY
+# ============================================================
+
+# Words that carry no retrieval signal in a support message.
+STOPWORDS = {
+    "the", "and", "for", "are", "but", "not", "you", "your", "yours",
+    "all", "any", "can", "could", "would", "should", "will", "have",
+    "has", "had", "was", "were", "been", "being", "this", "that",
+    "these", "those", "with", "without", "from", "into", "about",
+    "there", "here", "what", "when", "where", "which", "who", "why",
+    "how", "our", "out", "get", "got", "give", "gave", "need", "want",
+    "wants", "please", "help", "tell", "some", "something", "anything",
+    "nothing", "still", "very", "just", "also", "them", "they", "she",
+    "him", "her", "his", "its", "did", "does", "doing", "done", "am",
+    "is", "my", "me", "i", "we", "us", "it", "a", "an", "of", "in",
+    "on", "at", "to", "as", "by", "or", "if", "so", "do", "be", "new",
+    "now", "today", "recently", "already", "again", "more", "most",
+    "much", "many", "same", "other", "another", "because", "since"
+}
+
+
+# Domain vocabulary that maps customer wording onto the topics
+# covered by the trusted knowledge base.
+DOMAIN_CONCEPTS = {
+
+    "delivery": [
+        "delivery", "deliver", "delivered", "deliveries", "shipment",
+        "shipping", "shipped", "dispatch", "dispatched", "courier",
+        "parcel", "package", "arrive", "arrived", "arrival", "transit",
+        "tracking", "track"
+    ],
+
+    "refund": [
+        "refund", "refunds", "refunded", "reimburse", "reimbursement",
+        "money back", "return", "returns", "returned", "cancel",
+        "cancelled", "canceled", "cancellation"
+    ],
+
+    "payment": [
+        "payment", "payments", "pay", "paid", "paying", "charge",
+        "charged", "charges", "billing", "billed", "transaction",
+        "transactions", "invoice", "failed", "failure", "declined",
+        "decline", "deducted", "duplicate", "twice", "overcharged"
+    ],
+
+    "troubleshooting": [
+        "technical", "technically", "troubleshooting", "troubleshoot",
+        "problem", "issue", "error", "broken", "malfunction",
+        "malfunctioning", "fault", "faulty", "device", "connectivity",
+        "network", "not working", "working", "switch on", "turn on",
+        "restart"
+    ],
+
+    "order": [
+        "order", "orders", "purchase", "purchased", "item", "items",
+        "product", "products"
+    ],
+
+    "security": [
+        "security", "unauthorized", "fraud", "fraudulent", "suspicious",
+        "hacked", "safe", "safety", "breach"
+    ],
+
+    "credentials": [
+        "password", "passwords", "otp", "credential", "credentials",
+        "login", "pin"
+    ]
+}
+
+
+# ============================================================
+# QUERY TERM PROCESSING
+# ============================================================
+
+def stem_token(token):
+    """
+    Apply very light suffix stripping so simple plural and verb
+    forms map onto one base token.
+    """
+
+    for suffix in ("ing", "ed", "es", "s"):
+
+        if (
+            token.endswith(suffix)
+            and len(token) - len(suffix) >= 3
+        ):
+
+            return token[: -len(suffix)]
+
+    return token
+
+
+def build_term_concept_map():
+    """
+    Map every vocabulary word (and its base form) onto the
+    domain concepts it belongs to.
+    """
+
+    mapping = {}
+
+    for concept, variants in DOMAIN_CONCEPTS.items():
+
+        for variant in variants:
+
+            for form in (variant, stem_token(variant)):
+
+                mapping.setdefault(
+                    form,
+                    set()
+                ).add(concept)
+
+    return mapping
+
+
+TERM_CONCEPTS = build_term_concept_map()
+
+
+def resolve_concepts(token):
+    """
+    Return the domain concepts a query token belongs to.
+    """
+
+    concepts = TERM_CONCEPTS.get(token)
+
+    if concepts:
+
+        return concepts
+
+    return TERM_CONCEPTS.get(
+        stem_token(token),
+        set()
+    )
+
+
+def extract_query_terms(query):
+    """
+    Convert a customer question into retrieval terms.
+
+    Stopwords and structural identifiers (order IDs, amounts and
+    dates) are removed because they do not describe the
+    knowledge-base topic and only dilute relevance.
+    """
+
+    terms = []
+
+    seen = set()
+
+    for raw_token in re.findall(r"[A-Za-z0-9]+", query):
+
+        token = raw_token.lower()
+
+        if any(character.isdigit() for character in raw_token):
+            continue
+
+        if len(token) <= 2:
+            continue
+
+        if token in STOPWORDS:
+            continue
+
+        if token in seen:
+            continue
+
+        seen.add(token)
+
+        terms.append(
+            {
+                "token": token,
+                "concepts": resolve_concepts(token)
+            }
+        )
+
+    return terms
+
+
+
+# ============================================================
+# TERM MATCHING
+# ============================================================
+
+TERM_PATTERN_CACHE = {}
+
+
+def build_term_pattern(term_text):
+    """
+    Build (and cache) a word-prefix pattern so "deliver" also
+    matches "delivered" and "delivery".
+    """
+
+    pattern = TERM_PATTERN_CACHE.get(term_text)
+
+    if pattern is None:
+
+        pattern = re.compile(
+            r"\b" + re.escape(term_text),
+            re.IGNORECASE
+        )
+
+        TERM_PATTERN_CACHE[term_text] = pattern
+
+    return pattern
+
+
+def term_matches_text(term, text):
+    """
+    Check whether a query term (or one of its domain vocabulary
+    variants) appears in the given text.
+    """
+
+    if term["concepts"]:
+
+        variants = [
+            variant
+            for concept in term["concepts"]
+            for variant in DOMAIN_CONCEPTS[concept]
+        ]
+
+    else:
+
+        variants = [term["token"]]
+
+    for variant in variants:
+
+        if build_term_pattern(variant).search(text):
+
+            return True
+
+    return False
+
+
+def collect_matched_terms(query_terms, text):
+    """
+    Return the query terms that are present in the given text.
+    """
+
+    return [
+        term
+        for term in query_terms
+        if term_matches_text(term, text)
+    ]
+
+
+def calculate_relevance_score(matched_terms, total_terms):
+    """
+    Combine how much of the question a document covers with the
+    strength of the matched domain vocabulary.
+
+    Score range: 0.0 (no evidence) to 1.0 (full coverage).
+    """
+
+    if not matched_terms or total_terms <= 0:
+
+        return 0.0
+
+    coverage = len(matched_terms) / total_terms
+
+    matched_weight = sum(
+        2 if term["concepts"] else 1
+        for term in matched_terms
+    )
+
+    keyword_strength = min(
+        matched_weight,
+        MAX_KEYWORD_WEIGHT
+    ) / MAX_KEYWORD_WEIGHT
+
+    score = (
+        COVERAGE_WEIGHT * coverage
+        + KEYWORD_WEIGHT * keyword_strength
+    )
+
+    return round(
+        min(score, 1.0),
+        3
+    )
+
+
+# ============================================================
+# DOCUMENT CHUNKING
+# ============================================================
+
+def is_metadata_line(line):
+    """
+    Detect a metadata header line so it is not treated as
+    customer-facing policy content.
+    """
+
+    if ":" not in line:
+
+        return False
+
+    field = line.split(
+        ":",
+        1
+    )[0].strip()
+
+    return field in METADATA_FIELDS
+
+
+def split_into_chunks(content):
+    """
+    Split a knowledge-base document into paragraph chunks with
+    the metadata header removed.
+    """
+
+    chunks = []
+
+    buffer = []
+
+    for line in content.splitlines():
+
+        stripped = line.strip()
+
+        if is_metadata_line(stripped):
+            continue
+
+        if not stripped:
+
+            if buffer:
+
+                chunks.append(
+                    " ".join(buffer)
+                )
+
+                buffer = []
+
+            continue
+
+        buffer.append(stripped)
+
+    if buffer:
+
+        chunks.append(
+            " ".join(buffer)
+        )
+
+    return chunks
+
+
+def document_body(content):
+    """
+    Return the searchable policy body of a document with the
+    metadata header removed.
+    """
+
+    return " ".join(
+        split_into_chunks(content)
+    )
+
+
+def collect_relevant_chunks(content, query_terms):
+    """
+    Find the document chunks that actually match the customer
+    question, most relevant chunk first.
+    """
+
+    chunks = []
+
+    for index, chunk in enumerate(
+        split_into_chunks(content)
+    ):
+
+        matched_terms = collect_matched_terms(
+            query_terms,
+            chunk
+        )
+
+        if not matched_terms:
+            continue
+
+        chunks.append(
+            {
+                "index": index,
+                "text": chunk,
+                "score": calculate_relevance_score(
+                    matched_terms,
+                    len(query_terms)
+                ),
+                "matched_terms": [
+                    term["token"]
+                    for term in matched_terms
+                ]
+            }
+        )
+
+    chunks.sort(
+        key=lambda item: item["score"],
+        reverse=True
+    )
+
+    return chunks
+
 
 # ============================================================
 # DOCUMENT SEARCH
@@ -366,98 +868,69 @@ def filter_documents_by_access(
 
 def search_documents(query):
     """
-    Improved keyword-based document retrieval.
+    Keyword-based retrieval over the trusted knowledge base.
 
-    Gives higher weight to:
-    - exact query phrases
-    - matching important words
-    - matching multiple query terms
+    Documents are ranked by question coverage, with domain
+    vocabulary carrying more weight than generic words. Only
+    documents that passed the knowledge-base security validation
+    are searched.
     """
 
-    documents = load_documents()
+    documents = load_trusted_documents()
 
     documents = remove_duplicate_documents(
         documents
     )
 
-    query_lower = query.lower().strip()
-
-    query_words = [
-        word.lower()
-        for word in re.findall(
-            r"\b\w+\b",
-            query_lower
-        )
-        if len(word) > 2
-    ]
+    query_terms = extract_query_terms(query)
 
     results = []
 
     for document in documents:
 
         content = document["content"]
-        searchable_text = content.lower()
 
-        score = 0
+        # Policy text is matched on the document body, not on
+        # the metadata header.
+        body = document_body(
+            content
+        )
 
-        # ----------------------------------------------------
-        # Exact phrase matching
-        # ----------------------------------------------------
+        matched_terms = collect_matched_terms(
+            query_terms,
+            body
+        )
 
-        if query_lower in searchable_text:
-            score += 5
-
-        # ----------------------------------------------------
-        # Individual keyword matching
-        # ----------------------------------------------------
-
-        matched_words = []
-
-        for word in query_words:
-
-            if word in searchable_text:
-
-                matched_words.append(word)
-
-                # Important domain words receive higher weight
-                if word in {
-                    "refund",
-                    "payment",
-                    "delivery",
-                    "order",
-                    "security",
-                    "password",
-                    "otp",
-                    "duplicate",
-                    "charged",
-                    "transaction",
-                    "troubleshooting",
-                    "product"
-                }:
-                    score += 2
-
-                else:
-                    score += 1
-
-        # ----------------------------------------------------
-        # Normalize score
-        # ----------------------------------------------------
-
-        if not matched_words:
+        if not matched_terms:
             continue
 
-        normalized_score = score / max(
-            len(query_words) * 2,
-            1
+        # A single generic word is not enough evidence.
+        if (
+            not any(
+                term["concepts"]
+                for term in matched_terms
+            )
+            and len(matched_terms) < 2
+        ):
+            continue
+
+        chunks = collect_relevant_chunks(
+            content,
+            query_terms
         )
 
         results.append(
             {
                 "filename": document["filename"],
-                "score": round(
-                    normalized_score,
-                    3
+                "score": calculate_relevance_score(
+                    matched_terms,
+                    len(query_terms)
                 ),
+                "matched_terms": [
+                    term["token"]
+                    for term in matched_terms
+                ],
+                "chunks": chunks,
                 "metadata": document["metadata"],
                 "content": content
             }

@@ -1,7 +1,17 @@
 from datetime import date
+import logging
+from pathlib import Path
+from shutil import copyfileobj
 
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import (
+    FastAPI,
+    UploadFile,
+    File,
+    Form
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, field_validator
 
 
 # ============================================================
@@ -40,6 +50,18 @@ from backend.rag.answer import generate_grounded_answer
 
 
 # ============================================================
+# TASK 5 - MULTIMODAL
+# ============================================================
+
+from backend.multimodal.file_handler import (
+    create_upload_directories,
+    is_allowed_file
+)
+
+from backend.multimodal.processor import process_file
+
+
+# ============================================================
 # TASK 6 - MULTILINGUAL
 # ============================================================
 
@@ -54,6 +76,22 @@ from backend.multilingual.session import SessionManager
 
 
 # ============================================================
+# LOGGING
+# ============================================================
+
+# Detailed diagnostics (for example OCR/upload failures)
+# are logged on the backend only. API responses never
+# contain stack traces.
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+)
+
+logger = logging.getLogger("genai_customer_support")
+
+
+# ============================================================
 # FASTAPI APPLICATION
 # ============================================================
 
@@ -62,6 +100,50 @@ app = FastAPI(
     description="AI-powered customer support chatbot",
     version="1.0.0"
 )
+
+# ============================================================
+# CORS - FRONTEND CONNECTION
+# ============================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ============================================================
+# GLOBAL ERROR HANDLING
+# ============================================================
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc):
+    """
+    Return a clean JSON error for unexpected backend failures.
+
+    The full diagnostic (including the traceback) is written to the
+    backend log only. The customer-facing response never contains a
+    stack trace or internal details.
+    """
+
+    logger.exception(
+        "Unhandled error while processing %s %s",
+        request.method,
+        request.url.path
+    )
+
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "internal_server_error",
+            "message": (
+                "An unexpected error occurred while processing "
+                "your request. Please try again."
+            )
+        }
+    )
 
 
 # ============================================================
@@ -81,6 +163,28 @@ class ChatRequest(BaseModel):
 
     # Optional historical policy date
     requested_date: str | None = None
+
+    @field_validator("message")
+    @classmethod
+    def message_must_not_be_blank(cls, value: str) -> str:
+        """
+        Reject empty or whitespace-only messages.
+
+        Without this guard an empty message would travel through the
+        whole pipeline and produce a meaningless analysis. The
+        customer instead receives a clear validation error (HTTP 422).
+        """
+
+        stripped = value.strip()
+
+        if not stripped:
+
+            raise ValueError(
+                "Message must not be empty. "
+                "Please describe your issue."
+            )
+
+        return stripped
 
 
 # ============================================================
@@ -133,6 +237,136 @@ def home():
 
 
 # ============================================================
+# TASK 5 - MULTIMODAL FILE UPLOAD
+# ============================================================
+
+@app.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    customer_message: str = Form("")
+):
+    """
+    Upload and process a customer document/image.
+
+    Supported formats:
+    - PDF
+    - PNG
+    - JPG
+    - JPEG
+    """
+
+    # --------------------------------------------------------
+    # STEP 1 - CREATE REQUIRED DIRECTORIES
+    # --------------------------------------------------------
+
+    create_upload_directories()
+
+    # --------------------------------------------------------
+    # STEP 2 - VALIDATE FILE NAME
+    # --------------------------------------------------------
+
+    if not file.filename:
+
+        return {
+            "success": False,
+            "stage": "file_validation",
+            "message": "No filename was provided."
+        }
+
+    # Prevent path traversal by keeping only the filename.
+    safe_filename = Path(file.filename).name
+
+    # --------------------------------------------------------
+    # STEP 3 - VALIDATE FILE EXTENSION
+    # --------------------------------------------------------
+
+    if not is_allowed_file(safe_filename):
+
+        return {
+            "success": False,
+            "stage": "file_validation",
+            "filename": safe_filename,
+            "message": "Unsupported file type."
+        }
+
+    # --------------------------------------------------------
+    # STEP 4 - SAVE TO INCOMING DIRECTORY
+    # --------------------------------------------------------
+
+    incoming_path = (
+        Path("data")
+        / "uploads"
+        / "incoming"
+        / safe_filename
+    )
+
+    try:
+
+        with incoming_path.open("wb") as buffer:
+
+            copyfileobj(
+                file.file,
+                buffer
+            )
+
+    except Exception as error:
+
+        return {
+            "success": False,
+            "stage": "file_upload",
+            "filename": safe_filename,
+            "message": "Failed to save uploaded file.",
+            "error": str(error)
+        }
+
+    # --------------------------------------------------------
+    # STEP 5 - PROCESS MULTIMODAL FILE
+    # --------------------------------------------------------
+
+    try:
+
+        result = process_file(
+            incoming_path,
+            customer_message=customer_message or None
+        )
+
+        if result.get("success"):
+
+            logger.info(
+                "Multimodal upload processed successfully: %s",
+                safe_filename
+            )
+
+        else:
+
+            logger.warning(
+                "Multimodal upload failed for %s at stage '%s': %s",
+                safe_filename,
+                result.get("stage"),
+                result.get("error") or result.get("message")
+            )
+
+        return result
+
+    except Exception as error:
+
+        # Full diagnostics stay in the backend log.
+        logger.exception(
+            "Unexpected error while processing uploaded file %s",
+            safe_filename
+        )
+
+        return {
+            "success": False,
+            "stage": "multimodal_processing",
+            "filename": safe_filename,
+            "message": "An unexpected error occurred while processing the file.",
+            "error": str(error),
+            "error_type": type(error).__name__
+        }
+
+
+# ============================================================
 # CHAT API
 # ============================================================
 
@@ -143,14 +377,20 @@ def chat(request: ChatRequest):
     # TASK 6 - MULTILINGUAL PROCESSING
     # ========================================================
 
+    # --------------------------------------------------------
     # Get/create customer session
+    # --------------------------------------------------------
+
     if request.customer_id not in session_manager.sessions:
 
         session_manager.create_session(
             request.customer_id
         )
 
+    # --------------------------------------------------------
     # Get isolated conversation context
+    # --------------------------------------------------------
+
     context_manager = get_customer_context(
         request.customer_id
     )
@@ -197,7 +437,34 @@ def chat(request: ChatRequest):
     )
 
     # --------------------------------------------------------
-    # 6. Get session status
+    # 6. Generate conversation summary
+    # --------------------------------------------------------
+
+    recent_messages = context_manager.get_recent_messages(
+        5
+    )
+
+    summary_parts = []
+
+    for message in recent_messages:
+
+        if message["role"] == "customer":
+
+            summary_parts.append(
+                message["content"]
+            )
+
+    conversation_summary = " | ".join(
+        summary_parts
+    )
+
+    session_manager.set_summary(
+        request.customer_id,
+        conversation_summary
+    )
+
+    # --------------------------------------------------------
+    # 7. Get session status
     # --------------------------------------------------------
 
     session_status = session_manager.check_session_status(
@@ -244,8 +511,10 @@ def chat(request: ChatRequest):
             request.customer_id
         )
 
-    unresolved_minutes = session_manager.get_unresolved_minutes(
-        request.customer_id
+    unresolved_minutes = (
+        session_manager.get_unresolved_minutes(
+            request.customer_id
+        )
     )
 
     # ========================================================
@@ -307,11 +576,18 @@ def chat(request: ChatRequest):
     if escalation_result["escalated"]:
 
         escalation_result["conversation_summary"] = (
+
             f"Customer {request.customer_id} reported: "
             f"{request.message}. "
-            f"Sentiment: {sentiment_result['category']}. "
-            f"Priority: {priority_result['priority']}. "
-            f"Unresolved for {unresolved_minutes} minutes."
+
+            f"Sentiment: "
+            f"{sentiment_result['category']}. "
+
+            f"Priority: "
+            f"{priority_result['priority']}. "
+
+            f"Unresolved for "
+            f"{unresolved_minutes} minutes."
         )
 
     # ========================================================
@@ -353,6 +629,26 @@ def chat(request: ChatRequest):
     )
 
     # ========================================================
+    # TASK 4 - RAG DEVELOPMENT LOGGING
+    #
+    # Retrieval diagnostics are written to the backend log only
+    # and are never exposed in the customer-facing response.
+    # ========================================================
+
+    logger.info(
+        "RAG /chat | customer_query=%r | rag_used=%s | "
+        "retrieval_score=%s | chunks_retrieved=%s | sources=%s",
+        request.message,
+        rag_result.get("rag_used", False),
+        rag_result.get("retrieval_score", 0.0),
+        rag_result.get("chunks_retrieved", 0),
+        [
+            source.get("filename")
+            for source in rag_result.get("sources", [])
+        ]
+    )
+
+    # ========================================================
     # RETURN CHATBOT RESULT
     # ========================================================
 
@@ -362,13 +658,15 @@ def chat(request: ChatRequest):
         # Original message
         # ----------------------------------------------------
 
-        "message": request.message,
+        "message":
+            request.message,
 
         # ====================================================
         # TASK 6 - MULTILINGUAL
         # ====================================================
 
-        "language": language_result,
+        "language":
+            language_result,
 
         "language_clarification_required":
             clarification_required,
@@ -471,7 +769,10 @@ def chat(request: ChatRequest):
             rag_result["sources"],
 
         "rag_used":
-            len(rag_result["sources"]) > 0
+            rag_result.get(
+                "rag_used",
+                len(rag_result["sources"]) > 0
+            )
     }
 
 
@@ -504,7 +805,8 @@ def create_ticket(request: ChatRequest):
 
         return {
 
-            "ticket_created": False,
+            "ticket_created":
+                False,
 
             "missing_information":
                 missing_information,
@@ -579,9 +881,11 @@ def create_ticket(request: ChatRequest):
 
         return {
 
-            "ticket_created": False,
+            "ticket_created":
+                False,
 
-            "duplicate": True,
+            "duplicate":
+                True,
 
             "message":
                 "A similar support ticket already exists.",
@@ -663,17 +967,30 @@ def create_ticket(request: ChatRequest):
         high_risk=
             sentiment_result["high_risk"],
 
-        unresolved_minutes=unresolved_minutes
+        unresolved_minutes=
+            unresolved_minutes
     )
+
+    # ========================================================
+    # ADD ESCALATION CONVERSATION SUMMARY
+    # ========================================================
 
     if escalation_result["escalated"]:
 
         escalation_result["conversation_summary"] = (
+
             f"Customer {request.customer_id} reported: "
+
             f"{request.message}. "
-            f"Sentiment: {sentiment_result['category']}. "
-            f"Priority: {priority_result['priority']}. "
-            f"Unresolved for {unresolved_minutes} minutes."
+
+            f"Sentiment: "
+            f"{sentiment_result['category']}. "
+
+            f"Priority: "
+            f"{priority_result['priority']}. "
+
+            f"Unresolved for "
+            f"{unresolved_minutes} minutes."
         )
 
     # ========================================================
@@ -682,9 +999,11 @@ def create_ticket(request: ChatRequest):
 
     queue_result = determine_support_queue(
 
-        priority=priority_result["priority"],
+        priority=
+            priority_result["priority"],
 
-        high_risk=sentiment_result["high_risk"]
+        high_risk=
+            sentiment_result["high_risk"]
     )
 
     # ========================================================
@@ -693,12 +1012,14 @@ def create_ticket(request: ChatRequest):
 
     routing_result = route_ticket(
 
-        issue=ticket_info["issue"],
+        issue=
+            ticket_info["issue"],
 
         priority=
             priority_result["priority"],
 
-        support_queue=queue_result
+        support_queue=
+            queue_result
     )
 
     # ========================================================
@@ -715,7 +1036,8 @@ def create_ticket(request: ChatRequest):
 
     ticket = SupportTicket(
 
-        ticket_id=ticket_id,
+        ticket_id=
+            ticket_id,
 
         customer=
             ticket_info["customer"],
@@ -741,12 +1063,14 @@ def create_ticket(request: ChatRequest):
         sentiment_confidence=
             sentiment_result["confidence"],
 
-        severity=severity,
+        severity=
+            severity,
 
         priority=
             priority_result["priority"],
 
-        status="Open"
+        status=
+            "Open"
     )
 
     # ========================================================
@@ -754,6 +1078,7 @@ def create_ticket(request: ChatRequest):
     # ========================================================
 
     handoff_summary = generate_handoff_summary(
+
         ticket.model_dump()
     )
 
@@ -761,7 +1086,9 @@ def create_ticket(request: ChatRequest):
     # 12. SAVE TICKET
     # ========================================================
 
-    tickets.append(ticket)
+    tickets.append(
+        ticket
+    )
 
     # ========================================================
     # 13. RETURN COMPLETE RESULT
@@ -769,10 +1096,13 @@ def create_ticket(request: ChatRequest):
 
     return {
 
-        "ticket_created": True,
+        "ticket_created":
+            True,
 
         "ticket":
-            ticket.model_dump(mode="json"),
+            ticket.model_dump(
+                mode="json"
+            ),
 
         "routing":
             routing_result,
