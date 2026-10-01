@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from backend.main import app
 from backend.rag.answer import SAFE_FALLBACK_ANSWER
 from backend.rag.retriever import (
+    extract_query_terms,
     load_documents,
     load_trusted_documents
 )
@@ -297,3 +298,82 @@ def test_upload_endpoint_still_works():
     # file validation must reject it without raising an error.
     assert data["success"] is False
     assert data["stage"] == "file_validation"
+
+
+# ============================================================
+# HINDI / MARATHI (DEVANAGARI) RETRIEVAL
+# ============================================================
+
+def test_hindi_delivery_question_uses_delivery_policy():
+    """
+    A Hindi-only question written in Devanagari script must still
+    find the English delivery policy.
+
+    Regression test for the production bug where Devanagari
+    tokens were dropped during query-term extraction, retrieval
+    found nothing and the safe fallback was returned.
+    """
+
+    data = ask("मेरा ऑर्डर ORD12345 अभी तक नहीं आया है।")
+
+    assert data["rag_used"] is True
+    assert source_names(data) == ["delivery_policy.txt"]
+    assert data["knowledge_base_answer"] != SAFE_FALLBACK_ANSWER
+
+    # Protected entities must survive the multilingual path.
+    assert data["ticket_information"]["order_id"] == "ORD12345"
+
+
+def test_hindi_delivery_question_without_order_id_uses_delivery_policy():
+
+    data = ask("मेरी डिलीवरी कब तक पहुँचेगी?")
+
+    assert data["rag_used"] is True
+    assert source_names(data) == ["delivery_policy.txt"]
+    assert data["knowledge_base_answer"] != SAFE_FALLBACK_ANSWER
+
+
+def test_marathi_delivery_question_uses_delivery_policy():
+
+    data = ask("माझा ऑर्डर अद्याप आला नाही.")
+
+    assert data["rag_used"] is True
+    assert source_names(data) == ["delivery_policy.txt"]
+    assert data["knowledge_base_answer"] != SAFE_FALLBACK_ANSWER
+
+
+def test_hindi_unrelated_question_returns_safe_fallback():
+    """
+    An unsupported Hindi question must still fall back safely
+    instead of inventing an answer.
+    """
+
+    data = ask("फ्रांस की राजधानी क्या है?")
+
+    assert data["rag_used"] is False
+    assert data["knowledge_base_sources"] == []
+    assert data["knowledge_base_answer"] == SAFE_FALLBACK_ANSWER
+
+
+def test_hindi_query_terms_map_to_existing_domain_concepts():
+    """
+    Devanagari words map onto the existing domain concepts;
+    Hindi function words carry no retrieval signal.
+    """
+
+    terms = extract_query_terms(
+        "मेरा ऑर्डर डिलीवरी नहीं आया"
+    )
+
+    concepts_by_token = {
+        term["token"]: term["concepts"]
+        for term in terms
+    }
+
+    assert concepts_by_token["ऑर्डर"] == {"order"}
+    assert concepts_by_token["डिलीवरी"] == {"delivery"}
+    assert concepts_by_token["आया"] == {"delivery"}
+
+    # Function words are skipped.
+    assert "मेरा" not in concepts_by_token
+    assert "नहीं" not in concepts_by_token

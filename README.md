@@ -110,6 +110,27 @@ If Tesseract is missing, image uploads return HTTP 200 with
 `success: false`, `stage: "text_extraction"` and an `ocr_engine`
 diagnostics block. PDF uploads keep working.
 
+### Deploying to Render (Docker)
+
+Render's **native Python runtime does not include OS-level
+packages**, so the `tesseract` executable is missing there and
+image uploads fail with `stage: "text_extraction"`. The repo
+therefore ships a `Dockerfile` (Python 3.12 slim + `tesseract-ocr`)
+for production.
+
+To switch an existing service to the Docker runtime:
+
+1. Open the Render Dashboard → your service → **Settings**.
+2. Scroll to **Build** → **Source** → **Edit**.
+3. Keep the same Git repo and branch, set **Runtime** to
+   **Docker** (Dockerfile path: repository root) and click
+   **Deploy**.
+
+The container starts the API with
+`uvicorn backend.main:app --host 0.0.0.0 --port $PORT`, so no
+build or start commands are needed. Local (non-Docker) runs are
+unchanged.
+
 ### Processing Pipeline
 
 ```text

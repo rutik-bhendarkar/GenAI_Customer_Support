@@ -1,0 +1,28 @@
+# Git / CI
+.git
+.github
+
+# Python environments and caches
+.venv
+venv
+**/__pycache__
+*.py[cod]
+.pytest_cache
+
+# Secrets (Render also copies secret files into the build context)
+.env
+.env.*
+
+# IDE / OS files
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Runtime state (recreated at startup)
+data/uploads
+
+# Local-only artifacts
+report
+GenAI_Customer_Support
+*.log

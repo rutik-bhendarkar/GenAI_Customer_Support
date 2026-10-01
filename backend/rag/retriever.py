@@ -540,8 +540,153 @@ DOMAIN_CONCEPTS = {
 
 
 # ============================================================
+# HINDI / MARATHI (DEVANAGARI) RETRIEVAL VOCABULARY
+# ============================================================
+
+# The knowledge-base documents are written in English, so a
+# Hindi-only question must first be mapped onto the domain
+# concept it describes. Every entry below points at an
+# EXISTING concept from DOMAIN_CONCEPTS above - no policy
+# content is invented here, only topic intent is translated.
+#
+# Devanagari words that are not listed here (function words,
+# possessives, unmapped inflections) are skipped during query
+# extraction because they can never match the English policy
+# text and would only dilute the relevance score.
+HINDI_CONCEPT_TERMS = {
+
+    # Order / purchase
+    "ऑर्डर": "order",
+    "आर्डर": "order",
+    "आइटम": "order",
+    "प्रोडक्ट": "order",
+    "खरीद": "order",
+    "खरीदा": "order",
+
+    # Delivery / shipment / arrival
+    "डिलीवरी": "delivery",
+    "डिलीवर": "delivery",
+    "पार्सल": "delivery",
+    "कूरियर": "delivery",
+    "शिपमेंट": "delivery",
+    "ट्रैक": "delivery",
+    "ट्रैकिंग": "delivery",
+    "पहुँचना": "delivery",
+    "पहुंचना": "delivery",
+    "पहुँचेगी": "delivery",
+    "पहुंचेगी": "delivery",
+    "पहुँचेगा": "delivery",
+    "पहुंचेगा": "delivery",
+    "पहुँचा": "delivery",
+    "पहुंचा": "delivery",
+    "आया": "delivery",
+    "आयी": "delivery",
+    "आये": "delivery",
+    "आना": "delivery",
+    "आए": "delivery",
+    "आला": "delivery",
+    "आली": "delivery",
+    "आले": "delivery",
+
+    # Refund / return / cancellation
+    "रिफंड": "refund",
+    "रिफण्ड": "refund",
+    "वापसी": "refund",
+    "रद्द": "refund",
+    "कैंसिल": "refund",
+    "रिटर्न": "refund",
+
+    # Payment / billing
+    "भुगतान": "payment",
+    "पेमेंट": "payment",
+    "चार्ज": "payment",
+    "शुल्क": "payment",
+    "बिल": "payment",
+    "बिलिंग": "payment",
+    "इनवॉइस": "payment",
+    "चालान": "payment",
+    "ट्रांजेक्शन": "payment",
+
+    # Troubleshooting
+    "समस्या": "troubleshooting",
+    "दिक्कत": "troubleshooting",
+    "त्रुटि": "troubleshooting",
+    "गड़बड़": "troubleshooting",
+    "गड़बड़ी": "troubleshooting",
+    "खराब": "troubleshooting",
+    "प्रॉब्लम": "troubleshooting",
+    "इश्यू": "troubleshooting",
+    "नेटवर्क": "troubleshooting",
+    "रीस्टार्ट": "troubleshooting",
+
+    # Security
+    "सुरक्षा": "security",
+    "धोखाधड़ी": "security",
+    "फर्जी": "security",
+    "फ्रॉड": "security",
+    "अनधिकृत": "security",
+    "संदिग्ध": "security",
+    "हैक": "security",
+    "हैकिंग": "security",
+    "चोरी": "security",
+
+    # Credentials
+    "पासवर्ड": "credentials",
+    "ओटीपी": "credentials",
+    "लॉगिन": "credentials",
+    "पिन": "credentials"
+}
+
+
+# Romanized Hindi/Marathi (Hinglish) function words that carry
+# no retrieval signal. They are treated exactly like the English
+# STOPWORDS above.
+HINGLISH_NOISE_TERMS = {
+    "mera", "meri", "mere", "mujhe", "mujhko", "humara", "humari",
+    "tumhara", "aapka", "hum", "aap", "tum",
+    "nahi", "nahin", "abhi", "tak", "hai", "hain", "hua", "hui",
+    "hue", "tha", "thi",
+    "kya", "kaise", "kab", "kyon", "kyu", "chahiye",
+    "aur", "bhi", "mein", "wala", "wali", "vala",
+    "kiya", "karna", "karta", "karti", "raha", "rahi",
+    "gaya", "gayi"
+}
+
+
+# Romanized Hindi/Marathi intent words mapped onto the same
+# domain concepts as the Devanagari vocabulary above.
+HINGLISH_CONCEPT_TERMS = {
+    "aaya": "delivery",
+    "aayi": "delivery",
+    "aaye": "delivery",
+    "aana": "delivery",
+    "pahuncha": "delivery",
+    "deri": "delivery",
+    "der": "delivery",
+    "wapas": "refund",
+    "wapis": "refund",
+    "dikkat": "troubleshooting",
+    "samasya": "troubleshooting",
+    "gadbadi": "troubleshooting",
+    "dhokha": "security",
+    "dhokhadhari": "security"
+}
+
+
+# ============================================================
 # QUERY TERM PROCESSING
 # ============================================================
+
+# Tokenizer that keeps both Latin words (English and Hinglish)
+# and Devanagari words (Hindi and Marathi) intact.
+QUERY_TOKEN_PATTERN = re.compile(
+    r"[A-Za-z0-9]+|[\u0900-\u097F]+"
+)
+
+# Devanagari sentence punctuation (danda) that the tokenizer can
+# capture as part of a Devanagari word run.
+DEVANAGARI_PUNCTUATION = "\u0964\u0965"
+
 
 def stem_token(token):
     """
@@ -616,28 +761,79 @@ def extract_query_terms(query):
 
     seen = set()
 
-    for raw_token in re.findall(r"[A-Za-z0-9]+", query):
+    for raw_token in QUERY_TOKEN_PATTERN.findall(query):
 
-        token = raw_token.lower()
+        # Lowercase the token and strip sentence punctuation such
+        # as the Devanagari danda (।) that the tokenizer can
+        # capture as part of a Devanagari word run.
+        token = raw_token.lower().strip(
+            DEVANAGARI_PUNCTUATION
+        )
 
-        if any(character.isdigit() for character in raw_token):
+        if not token:
+            continue
+
+        if any(character.isdigit() for character in token):
             continue
 
         if len(token) <= 2:
             continue
 
+        if token in seen:
+            continue
+
+        # --------------------------------------------------------
+        # HINDI / MARATHI (DEVANAGARI) TERMS
+        # --------------------------------------------------------
+        # The knowledge base is written in English, so a
+        # Devanagari word is first mapped onto the domain concept
+        # it describes. Unknown Devanagari words are skipped
+        # because they can never match the English policy text
+        # and would only dilute the relevance score.
+
+        if not token.isascii():
+
+            concept = HINDI_CONCEPT_TERMS.get(token)
+
+            if concept is None:
+                continue
+
+            seen.add(token)
+
+            terms.append(
+                {
+                    "token": token,
+                    "concepts": {concept}
+                }
+            )
+
+            continue
+
+        # --------------------------------------------------------
+        # ENGLISH / ROMANIZED (HINGLISH) TERMS
+        # --------------------------------------------------------
+
         if token in STOPWORDS:
             continue
 
-        if token in seen:
+        if token in HINGLISH_NOISE_TERMS:
             continue
+
+        concepts = set(
+            resolve_concepts(token)
+        )
+
+        hinglish_concept = HINGLISH_CONCEPT_TERMS.get(token)
+
+        if hinglish_concept:
+            concepts.add(hinglish_concept)
 
         seen.add(token)
 
         terms.append(
             {
                 "token": token,
-                "concepts": resolve_concepts(token)
+                "concepts": concepts
             }
         )
 
