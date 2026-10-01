@@ -122,13 +122,26 @@ def upload_file(
 # HEALTH CHECK
 # ============================================================
 
-def test_home_endpoint():
+def test_health_endpoint():
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+
+    assert response.json()["status"] == "online"
+
+
+def test_home_endpoint_serves_frontend():
+    """GET / serves the chat UI HTML, not the JSON health response."""
 
     response = client.get("/")
 
     assert response.status_code == 200
 
-    assert response.json()["status"] == "online"
+    assert "text/html" in response.headers["content-type"]
+
+    assert "<!DOCTYPE html>" in response.text
+    assert 'id="chatBox"' in response.text
 
 
 # ============================================================

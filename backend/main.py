@@ -10,7 +10,8 @@ from fastapi import (
     Form
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 
@@ -224,16 +225,49 @@ def get_customer_context(customer_id):
 
 
 # ============================================================
-# HOME API
+# FRONTEND STATIC FILES (PRODUCTION + LOCAL)
 # ============================================================
 
-@app.get("/")
+# The frontend lives in frontend/ at the project root:
+# frontend/index.html, frontend/script.js, frontend/style.css.
+# Serving it from the same FastAPI app means the deployed URL
+# (for example Render) shows the chat UI at "/" while the API
+# (POST /chat, POST /tickets, POST /upload) stays on the same
+# origin, so no CORS configuration is needed.
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+FRONTEND_DIR = BASE_DIR / "frontend"
+
+# Absolute path to the chat UI entry point.
+FRONTEND_INDEX = FRONTEND_DIR / "index.html"
+
+# ============================================================
+# HOME - FRONTEND UI
+# ============================================================
+
+@app.get("/", include_in_schema=False)
 def home():
+    """Serve the customer support chat UI."""
+
+    return FileResponse(
+        FRONTEND_INDEX,
+        media_type="text/html"
+    )
+
+
+@app.get("/health")
+def health():
+    """API health check (JSON preserved from the old root route)."""
 
     return {
         "status": "online",
         "message": "GenAI Customer Support API is running"
     }
+
+
+# Static assets are mounted at the END of this file (after all API
+# routes) so that POST /chat, POST /tickets and POST /upload are
+# never shadowed by the static mount.
 
 
 # ============================================================
@@ -1128,3 +1162,22 @@ def create_ticket(request: ChatRequest):
         "support_queue":
             queue_result
     }
+
+
+# ============================================================
+# FRONTEND STATIC ASSETS (PRODUCTION + LOCAL)
+# ============================================================
+
+# Serves frontend/script.js and frontend/style.css through the
+# relative URLs used by frontend/index.html:
+#   <script src="script.js">
+#   <link rel="stylesheet" href="style.css">
+# Mounted AFTER all API routes so POST /chat, POST /tickets and
+# POST /upload are never shadowed. GET "/" above keeps serving
+# index.html explicitly via FileResponse.
+if FRONTEND_DIR.is_dir():
+    app.mount(
+        "/",
+        StaticFiles(directory=FRONTEND_DIR, html=True),
+        name="frontend"
+    )

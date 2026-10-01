@@ -6,7 +6,9 @@ the frontend does, and verify important fields instead of exact
 timestamps, so the tests stay valid on any day and time.
 
 Covered endpoints:
-    GET  /
+    GET  / (frontend chat UI - HTML)
+    GET  /health (JSON API health)
+    GET  /script.js, /style.css (frontend assets)
     POST /chat
     POST /tickets
 """
@@ -65,9 +67,23 @@ def source_names(data):
 # HEALTH CHECK
 # ============================================================
 
-def test_home_endpoint_reports_online():
+def test_home_endpoint_serves_frontend():
+    """GET / serves the chat UI HTML, not the JSON health response."""
 
     response = client.get("/")
+
+    assert response.status_code == 200
+
+    assert "text/html" in response.headers["content-type"]
+
+    assert "<!DOCTYPE html>" in response.text
+    assert 'id="chatBox"' in response.text
+    assert '<script src="script.js"></script>' in response.text
+
+
+def test_health_endpoint_reports_online():
+
+    response = client.get("/health")
 
     assert response.status_code == 200
 
@@ -75,6 +91,19 @@ def test_home_endpoint_reports_online():
 
     assert body["status"] == "online"
     assert "message" in body
+
+
+def test_frontend_assets_are_served():
+
+    script = client.get("/script.js")
+
+    assert script.status_code == 200
+    assert "/chat" in script.text
+
+    style = client.get("/style.css")
+
+    assert style.status_code == 200
+    assert "chat" in style.text.lower()
 
 
 def test_api_documentation_is_available():

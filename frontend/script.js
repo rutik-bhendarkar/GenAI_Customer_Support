@@ -12,14 +12,18 @@
 //
 //     <script>window.API_BASE_URL = "http://192.168.1.10:8000";</script>
 //
-// The default keeps the local FastAPI development server working.
+// The default is the same origin that served this page (""), so the
+// UI works unchanged both locally (uvicorn + FileResponse/StaticFiles)
+// and in production (for example Render) without CORS configuration.
+// A hardcoded 127.0.0.1 URL would break the deployed site because the
+// browser would call the visitor's own machine instead of the server.
 
 const API_BASE_URL = (
     typeof window !== "undefined" &&
     window.API_BASE_URL
 )
     ? window.API_BASE_URL
-    : "http://127.0.0.1:8000";
+    : "";
 
 
 // ============================================================
@@ -339,7 +343,7 @@ async function checkBackend() {
 
         const response =
             await fetch(
-                `${API_BASE_URL}/`
+                `${API_BASE_URL}/health`
             );
 
 
