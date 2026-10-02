@@ -1,0 +1,27 @@
+# ============================================================
+# RENDER BLUEPRINT (infrastructure as code)
+# ============================================================
+#
+# The service MUST run with the Docker runtime: Render's native
+# Python runtime provides no OS-level packages, so the Tesseract
+# OCR engine required by backend/multimodal/ocr.py for .png/.jpg
+# uploads is missing there (image uploads fail at text_extraction
+# with "tesseract is not installed").
+#
+# The Dockerfile at the repository root installs `tesseract-ocr`
+# on top of python:3.12-slim, which makes image OCR work end to end.
+#
+# NOTE: an existing dashboard-created service has an immutable
+# runtime. To move the current service onto this Blueprint config,
+# either switch Runtime -> Docker under
+#   Render Dashboard -> Service -> Settings -> Build
+# (see README.md), or recreate the service from this Blueprint
+# (a runtime change for an existing service must be done by
+# renaming/recreating it per Render's runtime immutability rule).
+
+services:
+  - type: web
+    name: genai-customer-support-nirh
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health

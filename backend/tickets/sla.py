@@ -11,11 +11,11 @@ BUSINESS_END_HOUR = 18
 # Monday = 0 ... Sunday = 6
 WORKING_DAYS = {0, 1, 2, 3, 4}
 
-# Add holidays here when required
-HOLIDAYS = {
+# Add holidays here when required (uncomment inside the set):
+HOLIDAYS = set([
     # date(2026, 10, 2),
     # date(2026, 12, 25),
-}
+])
 
 
 # SLA duration in business minutes

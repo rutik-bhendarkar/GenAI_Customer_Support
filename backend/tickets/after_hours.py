@@ -10,10 +10,10 @@ BUSINESS_END_HOUR = 18
 
 WORKING_DAYS = {0, 1, 2, 3, 4}
 
-HOLIDAYS = {
+HOLIDAYS = set([
     # date(2026, 10, 2),
     # date(2026, 12, 25),
-}
+])
 
 
 # ==========================================

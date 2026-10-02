@@ -143,6 +143,14 @@ def extract_ticket_information(message: str):
         "not delivered":
             "Order has not been delivered",
 
+        # Canonical phrasing used across the product: the keyword above
+        # ("not delivered") does not occur inside "has not been
+        # delivered", so without this entry the most common delivery
+        # complaint never matched its own normalized description and
+        # the raw message leaked into the issue field.
+        "not been delivered":
+            "Order has not been delivered",
+
         "not arrived":
             "Order has not arrived",
 
